@@ -1,0 +1,81 @@
+name: Setup Git integration
+description: Provision an ephemeral Gitea server and configure git-integrator for charm integration tests.
+author: Canonical
+branding:
+  icon: git-branch
+  color: purple
+
+inputs:
+  repository-name:
+    description: Name of the temporary Gitea repository.
+    required: false
+    default: charm-test-repo
+  tracking-ref:
+    description: Git branch to configure in git-integrator.
+    required: false
+    default: main
+  path:
+    description: Repository path to expose through the integration.
+    required: false
+    default: /
+  model:
+    description: Juju model to create/use for the test.
+    required: false
+    default: git-integration
+  git-integrator-channel:
+    description: CharmHub channel for git-integrator.
+    required: false
+    default: 1.0/edge
+  gitea-image:
+    description: Gitea container image used for the temporary server.
+    required: false
+    default: docker.gitea.com/gitea:1.23.8
+
+outputs:
+  repository-url:
+    description: Internal cluster URL configured in git-integrator.
+    value: ${{ steps.gitea.outputs.repository-url }}
+  repository-name:
+    description: Name of the temporary repository.
+    value: ${{ steps.gitea.outputs.repository-name }}
+  tracking-ref:
+    description: Git branch configured in git-integrator.
+    value: ${{ steps.gitea.outputs.tracking-ref }}
+  git-integrator-app:
+    description: Juju application name for git-integrator.
+    value: ${{ steps.integrator.outputs.git-integrator-app }}
+  juju-model:
+    description: Juju model containing git-integrator.
+    value: ${{ steps.integrator.outputs.juju-model }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Juju and MicroK8s
+      if: ${{ env.CONTROLLER_NAME == '' }}
+      uses: charmed-kubernetes/actions-operator@main
+      with:
+        provider: microk8s
+        channel: 1.32-strict/stable
+        juju-channel: 3.6/stable
+
+    - name: Create Gitea and seed repository
+      id: gitea
+      shell: bash
+      env:
+        REPOSITORY_NAME: ${{ inputs.repository-name }}
+        TRACKING_REF: ${{ inputs.tracking-ref }}
+        GITEA_IMAGE: ${{ inputs.gitea-image }}
+      run: bash "${{ github.action_path }}/scripts/setup-gitea.sh"
+
+    - name: Deploy and configure git-integrator
+      id: integrator
+      shell: bash
+      env:
+        JUJU_MODEL: ${{ inputs.model }}
+        GIT_INTEGRATOR_CHANNEL: ${{ inputs.git-integrator-channel }}
+        REPOSITORY_URL: ${{ steps.gitea.outputs.repository-url }}
+        TRACKING_REF: ${{ inputs.tracking-ref }}
+        REPOSITORY_PATH: ${{ inputs.path }}
+        GITEA_USERNAME: ${{ steps.gitea.outputs.gitea-username }}
+      run: bash "${{ github.action_path }}/scripts/deploy-git-integrator.sh"

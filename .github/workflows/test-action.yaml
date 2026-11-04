@@ -1,0 +1,56 @@
+name: Test setup-git-action
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out action
+        uses: actions/checkout@v4
+
+      - name: Set up Git integration
+        id: git
+        uses: ./
+        with:
+          repository-name: charm-test-repo
+          tracking-ref: main
+          model: git-integration
+
+      - name: Deploy Airflow coordinator
+        shell: bash
+        run: |
+          set -euo pipefail
+          juju deploy airflow-coordinator-k8s --channel=3.1/edge
+          juju integrate git-integrator airflow-coordinator-k8s
+          juju wait-for application airflow-coordinator-k8s \
+            --query='forEach(units, unit => unit.agent-status == "idle")' \
+            --timeout=30m0s
+
+      - name: Verify relation data
+        env:
+          EXPECTED_REPOSITORY_URL: ${{ steps.git.outputs.repository-url }}
+          EXPECTED_TRACKING_REF: ${{ steps.git.outputs.tracking-ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          juju show-unit airflow-coordinator-k8s/0 > unit-details.yaml
+          cat unit-details.yaml
+          grep --fixed-strings --quiet "$EXPECTED_REPOSITORY_URL" unit-details.yaml
+          grep --fixed-strings --quiet "$EXPECTED_TRACKING_REF" unit-details.yaml
+          echo 'Expected repository URL and tracking reference were found.'
+
+      - name: Cleanup test resources
+        if: always()
+        env:
+          JUJU_MODEL: git-integration
+        shell: bash
+        run: bash scripts/cleanup.sh
