@@ -65,23 +65,29 @@ runs:
       shell: bash
       run: |
         set +e
+
+        MIKROK8S="sudo -g snap_microk8s microk8s"
+
         echo "=== MicroK8s status ==="
-        microk8s status --wait-ready
+        $MIKROK8S status
 
         echo "=== Kubernetes nodes ==="
-        microk8s kubectl get nodes -o wide
+        $MIKROK8S kubectl get nodes -o wide
 
         echo "=== kube-system pods ==="
-        microk8s kubectl get pods -n kube-system -o wide
+        $MIKROK8S kubectl get pods -n kube-system -o wide
 
         echo "=== CoreDNS deployment ==="
-        microk8s kubectl get deployment coredns -n kube-system -o wide
+        $MIKROK8S kubectl get deployment coredns -n kube-system -o wide
 
         echo "=== CoreDNS pods ==="
-        microk8s kubectl describe pods -n kube-system -l k8s-app=kube-dns
+        $MIKROK8S kubectl describe pods -n kube-system -l k8s-app=kube-dns
+
+        echo "=== CoreDNS logs ==="
+        $MIKROK8S kubectl logs -n kube-system -l k8s-app=kube-dns --all-containers=true --tail=200
 
         echo "=== kube-system events ==="
-        microk8s kubectl get events -n kube-system --sort-by='.lastTimestamp'
+        $MIKROK8S kubectl get events -n kube-system --sort-by='.lastTimestamp'
         
     - name: Create Gitea and seed repository
       id: gitea
