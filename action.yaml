@@ -51,6 +51,7 @@ outputs:
 runs:
   using: composite
   steps:
+    
     - name: Set up Juju and MicroK8s
       if: ${{ env.CONTROLLER_NAME == '' }}
       uses: charmed-kubernetes/actions-operator@main
@@ -59,6 +60,29 @@ runs:
         channel: 1.32-strict/stable
         juju-channel: 3.6/stable
 
+    - name: Debug MicroK8s CoreDNS
+      if: failure()
+      shell: bash
+      run: |
+        set +e
+        echo "=== MicroK8s status ==="
+        microk8s status --wait-ready
+
+        echo "=== Kubernetes nodes ==="
+        microk8s kubectl get nodes -o wide
+
+        echo "=== kube-system pods ==="
+        microk8s kubectl get pods -n kube-system -o wide
+
+        echo "=== CoreDNS deployment ==="
+        microk8s kubectl get deployment coredns -n kube-system -o wide
+
+        echo "=== CoreDNS pods ==="
+        microk8s kubectl describe pods -n kube-system -l k8s-app=kube-dns
+
+        echo "=== kube-system events ==="
+        microk8s kubectl get events -n kube-system --sort-by='.lastTimestamp'
+        
     - name: Create Gitea and seed repository
       id: gitea
       shell: bash

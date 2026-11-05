@@ -1,4 +1,4 @@
-# setup-git-action
+# setup-gitea-action
 
 A composite GitHub Action that provisions a temporary Gitea instance, creates and seeds a test repository, and deploys/configures [`git-integrator`](https://charmhub.io/git-integrator) for Juju charm integration tests.
 
