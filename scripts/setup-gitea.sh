@@ -39,11 +39,41 @@ envsubst < "${MANIFEST}" > "${tmp_manifest}"
 echo "=== Deploying Gitea ==="
 kubectl apply -f "${tmp_manifest}"
 
-echo "=== Waiting for Gitea ==="
-kubectl rollout status \
+eecho "=== Waiting for Gitea ==="
+if ! kubectl rollout status \
     "deployment/gitea" \
     --namespace "${GITEA_NAMESPACE}" \
-    --timeout=5m
+    --timeout=5m; then
+
+    echo "=== Gitea deployment ==="
+    kubectl get deployment gitea \
+        --namespace "${GITEA_NAMESPACE}" \
+        -o wide
+
+    echo "=== Gitea pods ==="
+    kubectl get pods \
+        --namespace "${GITEA_NAMESPACE}" \
+        -o wide
+
+    echo "=== Gitea pod description ==="
+    kubectl describe pods \
+        --namespace "${GITEA_NAMESPACE}" \
+        -l app=gitea
+
+    echo "=== Gitea events ==="
+    kubectl get events \
+        --namespace "${GITEA_NAMESPACE}" \
+        --sort-by='.lastTimestamp'
+
+    echo "=== Gitea logs ==="
+    kubectl logs \
+        --namespace "${GITEA_NAMESPACE}" \
+        deployment/gitea \
+        --all-containers=true \
+        --tail=200 || true
+
+    exit 1
+fi
 
 LOCAL_PORT="$(python3 - <<'PY'
 import socket
