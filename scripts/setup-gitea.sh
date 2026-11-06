@@ -1,119 +1,194 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
 
+: "${GITEA_NAMESPACE:?GITEA_NAMESPACE is required}"
+: "${GITEA_IMAGE:?GITEA_IMAGE is required}"
+: "${GITEA_USERNAME:?GITEA_USERNAME is required}"
 : "${REPOSITORY_NAME:?REPOSITORY_NAME is required}"
 : "${TRACKING_REF:?TRACKING_REF is required}"
-: "${GITEA_IMAGE:?GITEA_IMAGE is required}"
 
-log() { printf '[setup-gitea] %s\n' "$*"; }
-fail() { log "ERROR: $*" >&2; exit 1; }
+ACTION_PATH="${GITHUB_ACTION_PATH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+MANIFEST="${ACTION_PATH}/resources/gitea.yaml"
 
-if command -v microk8s >/dev/null 2>&1; then
-  KUBECTL=(microk8s kubectl)
-elif command -v kubectl >/dev/null 2>&1; then
-  KUBECTL=(kubectl)
-else
-  fail 'Neither microk8s nor kubectl is available. Check the operator environment setup.'
+GITEA_PASSWORD="$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(24))
+PY
+)"
+
+GITEA_TOKEN_NAME="git-integrator-$(date +%s)-${RANDOM}"
+GITEA_EMAIL="${GITEA_USERNAME}@example.invalid"
+GITEA_INTERNAL_BASE_URL="http://gitea.${GITEA_NAMESPACE}.svc.cluster.local:3000"
+GITEA_INTERNAL_REPOSITORY_URL="${GITEA_INTERNAL_BASE_URL}/${GITEA_USERNAME}/${REPOSITORY_NAME}.git"
+
+tmp_manifest="$(mktemp)"
+port_forward_pid=""
+
+cleanup() {
+    if [[ -n "${port_forward_pid}" ]]; then
+        kill "${port_forward_pid}" >/dev/null 2>&1 || true
+        wait "${port_forward_pid}" >/dev/null 2>&1 || true
+    fi
+    rm -f "${tmp_manifest}"
+}
+trap cleanup EXIT
+
+export GITEA_NAMESPACE GITEA_IMAGE
+envsubst < "${MANIFEST}" > "${tmp_manifest}"
+
+echo "=== Deploying Gitea ==="
+kubectl apply -f "${tmp_manifest}"
+
+echo "=== Waiting for Gitea ==="
+kubectl rollout status \
+    "deployment/gitea" \
+    --namespace "${GITEA_NAMESPACE}" \
+    --timeout=5m
+
+LOCAL_PORT="$(python3 - <<'PY'
+import socket
+with socket.socket() as s:
+    s.bind(("127.0.0.1", 0))
+    print(s.getsockname()[1])
+PY
+)"
+
+echo "=== Starting temporary Gitea port-forward ==="
+kubectl port-forward \
+    --namespace "${GITEA_NAMESPACE}" \
+    "service/gitea" \
+    "${LOCAL_PORT}:3000" >/tmp/gitea-port-forward.log 2>&1 &
+port_forward_pid=$!
+
+for _ in $(seq 1 60); do
+    if curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/api/v1/version" >/dev/null 2>&1; then
+        break
+    fi
+
+    if ! kill -0 "${port_forward_pid}" >/dev/null 2>&1; then
+        cat /tmp/gitea-port-forward.log >&2 || true
+        echo "::error::Gitea port-forward exited unexpectedly."
+        exit 1
+    fi
+
+    sleep 2
+done
+
+if ! curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/api/v1/version" >/dev/null 2>&1; then
+    cat /tmp/gitea-port-forward.log >&2 || true
+    echo "::error::Gitea did not become reachable through port-forward."
+    exit 1
 fi
 
-for command in curl git jq openssl; do
-  command -v "$command" >/dev/null 2>&1 || fail "Required command not found: $command"
-done
+echo "=== Creating Gitea user ==="
+kubectl exec \
+    --namespace "${GITEA_NAMESPACE}" \
+    deployment/gitea \
+    -- \
+    gitea admin user create \
+        --username "${GITEA_USERNAME}" \
+        --password "${GITEA_PASSWORD}" \
+        --email "${GITEA_EMAIL}" \
+        --must-change-password=false \
+        --config /data/gitea/conf/app.ini \
+    >/tmp/gitea-user-create.log 2>&1 || {
+        if ! grep -qE 'already exists|user.*exists' /tmp/gitea-user-create.log; then
+            cat /tmp/gitea-user-create.log >&2
+            echo "::error::Failed to create Gitea user."
+            exit 1
+        fi
+    }
 
-# The manifest is rendered here rather than relying on shell expansion in YAML.
-TMP_MANIFEST="${RUNNER_TEMP:-/tmp}/gitea-${GITHUB_RUN_ID:-local}.yaml"
-sed "s|\${GITEA_IMAGE}|${GITEA_IMAGE}|g" "$GITHUB_ACTION_PATH/resources/gitea.yaml" > "$TMP_MANIFEST"
-"${KUBECTL[@]}" apply -f "$TMP_MANIFEST"
-log 'Waiting for Gitea deployment to become ready...'
-"${KUBECTL[@]}" -n gitea rollout status deployment/gitea --timeout=5m
+echo "=== Creating Gitea access token ==="
+TOKEN_RESPONSE="$(
+    curl --silent --show-error --fail \
+        -X POST \
+        -u "${GITEA_USERNAME}:${GITEA_PASSWORD}" \
+        "http://127.0.0.1:${LOCAL_PORT}/api/v1/users/${GITEA_USERNAME}/tokens" \
+        -H 'Content-Type: application/json' \
+        -d "$(python3 - <<PY
+import json
+print(json.dumps({
+    "name": "${GITEA_TOKEN_NAME}",
+    "scopes": ["all"]
+}))
+PY
+)"
+)"
 
-GITEA_USERNAME='git-integrator-ci'
-GITEA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
-echo "::add-mask::$GITEA_ADMIN_PASSWORD"
-GITEA_TOKEN_NAME="git-integrator-${GITHUB_RUN_ID:-local}"
+GITEA_TOKEN="$(python3 - <<PY
+import json, sys
+data = json.loads(sys.stdin.read())
+token = data.get("sha1")
+if not token:
+    raise SystemExit("Gitea token response did not contain sha1")
+print(token)
+PY
+<<< "${TOKEN_RESPONSE}")"
 
-# Forward the in-cluster service to the runner so the setup script can use its API.
-PORT_FORWARD_LOG="${RUNNER_TEMP:-/tmp}/gitea-port-forward.log"
-"${KUBECTL[@]}" -n gitea port-forward service/gitea 3000:3000 --address 127.0.0.1 >"$PORT_FORWARD_LOG" 2>&1 &
-PORT_FORWARD_PID=$!
-printf '%s\n' "$PORT_FORWARD_PID" > "${RUNNER_TEMP:-/tmp}/gitea-port-forward.pid"
+echo "=== Creating Gitea repository ==="
+HTTP_STATUS="$(
+    curl --silent --show-error \
+        -o /tmp/gitea-repo-response.json \
+        -w '%{http_code}' \
+        -X POST \
+        -u "${GITEA_USERNAME}:${GITEA_TOKEN}" \
+        "http://127.0.0.1:${LOCAL_PORT}/api/v1/user/repos" \
+        -H 'Content-Type: application/json' \
+        -d "$(python3 - <<PY
+import json
+print(json.dumps({
+    "name": "${REPOSITORY_NAME}",
+    "private": True,
+    "auto_init": False
+}))
+PY
+)"
+)"
 
-cleanup_on_error() {
-  if [[ -n "${PORT_FORWARD_PID:-}" ]]; then
-    kill "$PORT_FORWARD_PID" 2>/dev/null || true
-  fi
-}
-trap cleanup_on_error ERR
+case "${HTTP_STATUS}" in
+    201)
+        ;;
+    409)
+        echo "Repository already exists; continuing."
+        ;;
+    *)
+        cat /tmp/gitea-repo-response.json >&2 || true
+        echo "::error::Failed to create Gitea repository (HTTP ${HTTP_STATUS})."
+        exit 1
+        ;;
+esac
 
-GITEA_LOCAL_URL='http://127.0.0.1:3000'
-for _ in $(seq 1 60); do
-  if curl --silent --fail "$GITEA_LOCAL_URL/" >/dev/null; then
-    break
-  fi
-  sleep 2
-done
-curl --silent --fail "$GITEA_LOCAL_URL/" >/dev/null || fail "Gitea did not become reachable. Port-forward log: $PORT_FORWARD_LOG"
+echo "=== Seeding repository ==="
+WORKTREE="$(mktemp -d)"
+trap 'rm -rf "${WORKTREE}"; cleanup' EXIT
 
-log 'Creating temporary Gitea administrator...'
-"${KUBECTL[@]}" -n gitea exec deployment/gitea -- \
-  gitea admin user create \
-  --username "$GITEA_USERNAME" \
-  --password "$GITEA_ADMIN_PASSWORD" \
-  --email 'git-integrator-ci@example.invalid' \
-  --admin \
-  --must-change-password=false
+git -C "${WORKTREE}" init -q
+git -C "${WORKTREE}" config user.name "Gitea CI"
+git -C "${WORKTREE}" config user.email "gitea-ci@example.invalid"
 
-log 'Creating a scoped Gitea access token...'
-TOKEN_RESPONSE="$(curl --silent --show-error --fail \
-  --user "$GITEA_USERNAME:$GITEA_ADMIN_PASSWORD" \
-  --header 'Content-Type: application/json' \
-  --data "$(jq -n --arg name "$GITEA_TOKEN_NAME" '{name:$name, scopes:["write:repository","read:user"]}')" \
-  "$GITEA_LOCAL_URL/api/v1/users/$GITEA_USERNAME/tokens")"
-GITEA_TOKEN="$(jq -er '.sha1' <<<"$TOKEN_RESPONSE")"
+cat > "${WORKTREE}/README.md" <<EOF
+# ${REPOSITORY_NAME}
 
-log "Creating repository '$REPOSITORY_NAME'..."
-curl --silent --show-error --fail \
-  --header "Authorization: token $GITEA_TOKEN" \
-  --header 'Content-Type: application/json' \
-  --data "$(jq -n --arg name "$REPOSITORY_NAME" '{name:$name, private:true, auto_init:false}')" \
-  "$GITEA_LOCAL_URL/api/v1/user/repos" >/dev/null
+This repository was created by setup-gitea-action.
+EOF
 
-log 'Creating and pushing sample repository content...'
-WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"; cleanup_on_error' EXIT
-(
-  cd "$WORK_DIR"
-  git init --initial-branch="$TRACKING_REF"
-  git config user.name 'Git integration test'
-  git config user.email 'git-integrator-ci@example.invalid'
-  cat > README.md <<'README'
-# Git integration test repository
+cat > "${WORKTREE}/TRACKING_REF" <<EOF
+${TRACKING_REF}
+EOF
 
-This repository is created automatically by setup-git-action.
-It is used to verify that git-integrator can access a Git repository
-and propagate its configuration through a Juju relation.
-README
-  mkdir -p test-data
-  printf 'Repository seeded by GitHub Actions run %s\n' "${GITHUB_RUN_ID:-local}" > test-data/sample.txt
-  git add README.md test-data/sample.txt
-  git commit -m 'Add sample content for charm integration test'
-  AUTH_HEADER="$(printf '%s' "$GITEA_USERNAME:$GITEA_TOKEN" | base64 -w0)"
-  GIT_TERMINAL_PROMPT=0 git -c "http.extraheader=Authorization: Basic $AUTH_HEADER" \
-    push "http://127.0.0.1:3000/$GITEA_USERNAME/$REPOSITORY_NAME.git" "$TRACKING_REF"
-)
+git -C "${WORKTREE}" add README.md TRACKING_REF
+git -C "${WORKTREE}" commit -q -m "Initial repository contents"
+git -C "${WORKTREE}" branch -M "${TRACKING_REF}"
 
-# The URL below is intentionally the Kubernetes service DNS name: it is the
-# address git-integrator uses from inside the same Kubernetes cluster.
-REPOSITORY_URL="http://gitea.gitea.svc.cluster.local:3000/$GITEA_USERNAME/$REPOSITORY_NAME.git"
-{
-  echo "repository-url=$REPOSITORY_URL"
-  echo "repository-name=$REPOSITORY_NAME"
-  echo "tracking-ref=$TRACKING_REF"
-  echo "gitea-username=$GITEA_USERNAME"
-} >> "$GITHUB_OUTPUT"
+GIT_TERMINAL_PROMPT=0 \
+git -C "${WORKTREE}" push \
+    "http://${GITEA_USERNAME}:${GITEA_TOKEN}@127.0.0.1:${LOCAL_PORT}/${GITEA_USERNAME}/${REPOSITORY_NAME}.git" \
+    "HEAD:${TRACKING_REF}"
 
-# Keep the token in the runner environment for subsequent composite steps; do not
-# expose it as a public action output. Register it with GitHub log masking first.
-echo "::add-mask::$GITEA_TOKEN"
-echo "GITEA_TOKEN=$GITEA_TOKEN" >> "$GITHUB_ENV"
-log 'Gitea is ready and the sample repository has been pushed.'
+echo "repository-url=${GITEA_INTERNAL_REPOSITORY_URL}" >> "${GITHUB_OUTPUT}"
+echo "repository-name=${REPOSITORY_NAME}" >> "${GITHUB_OUTPUT}"
+echo "gitea-username=${GITEA_USERNAME}" >> "${GITHUB_OUTPUT}"
+echo "gitea-token=${GITEA_TOKEN}" >> "${GITHUB_OUTPUT}"
+
+echo "Gitea repository ready: ${GITEA_INTERNAL_REPOSITORY_URL}"

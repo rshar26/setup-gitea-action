@@ -1,56 +1,41 @@
-name: Test setup-git-action
+name: Test setup-gitea-action
 
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
+    inputs:
+      model:
+        description: "Existing Juju model available on the runner."
+        required: true
+        type: string
 
 jobs:
-  integration:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+  test:
+    runs-on: ubuntu-24.04
+
     steps:
-      - name: Check out action
+      # This workflow assumes the runner has already been provisioned with
+      # Kubernetes and Juju, for example by the repository's existing
+      # Concierge-based setup. The action itself intentionally does not
+      # provision either environment.
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Git integration
-        id: git
+      - name: Set up Gitea and git-integrator
         uses: ./
         with:
-          repository-name: charm-test-repo
-          tracking-ref: main
-          model: git-integration
+          model: ${{ inputs.model }}
 
-      - name: Deploy Airflow coordinator
+      - name: Verify git-integrator
         shell: bash
         run: |
           set -euo pipefail
-          juju deploy airflow-coordinator-k8s --channel=3.1/edge
-          juju integrate git-integrator airflow-coordinator-k8s
-          juju wait-for application airflow-coordinator-k8s \
-            --query='forEach(units, unit => unit.agent-status == "idle")' \
-            --timeout=30m0s
+          juju status --model "${{ inputs.model }}" git-integrator
+          kubectl get pods -n gitea
 
-      - name: Verify relation data
-        env:
-          EXPECTED_REPOSITORY_URL: ${{ steps.git.outputs.repository-url }}
-          EXPECTED_TRACKING_REF: ${{ steps.git.outputs.tracking-ref }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          juju show-unit airflow-coordinator-k8s/0 > unit-details.yaml
-          cat unit-details.yaml
-          grep --fixed-strings --quiet "$EXPECTED_REPOSITORY_URL" unit-details.yaml
-          grep --fixed-strings --quiet "$EXPECTED_TRACKING_REF" unit-details.yaml
-          echo 'Expected repository URL and tracking reference were found.'
-
-      - name: Cleanup test resources
+      - name: Clean up
         if: always()
-        env:
-          JUJU_MODEL: git-integration
         shell: bash
-        run: bash scripts/cleanup.sh
+        env:
+          JUJU_MODEL: ${{ inputs.model }}
+          GITEA_NAMESPACE: gitea
+        run: bash "${{ github.action_path }}/scripts/cleanup.sh"

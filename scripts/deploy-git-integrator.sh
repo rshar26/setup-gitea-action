@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
 
 : "${JUJU_MODEL:?JUJU_MODEL is required}"
 : "${GIT_INTEGRATOR_CHANNEL:?GIT_INTEGRATOR_CHANNEL is required}"
@@ -9,52 +9,54 @@ set -Eeuo pipefail
 : "${GITEA_USERNAME:?GITEA_USERNAME is required}"
 : "${GITEA_TOKEN:?GITEA_TOKEN is required}"
 
-log() { printf '[deploy-git-integrator] %s\n' "$*"; }
+APP_NAME="git-integrator"
+SECRET_NAME="git-integrator-credentials"
 
-command -v juju >/dev/null 2>&1 || { echo 'juju CLI is not available' >&2; exit 1; }
-command -v openssl >/dev/null 2>&1 || { echo 'openssl is not available' >&2; exit 1; }
-
-APP_NAME='git-integrator'
-SECRET_NAME="git-integrator-gitea-${GITHUB_RUN_ID:-local}"
-
-log 'Creating Juju model...'
-if ! juju models --format=json | jq -e --arg model "$JUJU_MODEL" '.models[]? | select(.name == $model)' >/dev/null; then
-  juju add-model "$JUJU_MODEL" microk8s
-fi
-juju switch "$JUJU_MODEL"
-
-log "Deploying git-integrator from channel $GIT_INTEGRATOR_CHANNEL..."
-if ! juju status --format=json | jq -e --arg app "$APP_NAME" '.applications[$app]' >/dev/null; then
-  juju deploy git-integrator --channel="$GIT_INTEGRATOR_CHANNEL"
+echo "=== Deploying ${APP_NAME} ==="
+if ! juju status "${APP_NAME}" --model="${JUJU_MODEL}" >/dev/null 2>&1; then
+    juju deploy \
+        "${APP_NAME}" \
+        --channel="${GIT_INTEGRATOR_CHANNEL}" \
+        --model="${JUJU_MODEL}"
 fi
 
-log 'Creating and granting the Juju secret...'
-SECRET_URI="$(juju add-secret "$SECRET_NAME" credentials-personal-access-token="$GITEA_TOKEN" | tail -n1 | tr -d '\r')"
-if [[ "$SECRET_URI" != secret:* ]]; then
-  # Juju versions can print informational text around the URI. Find the URI
-  # without ever printing the token value.
-  SECRET_URI="$(juju secrets --format=json | jq -r --arg name "$SECRET_NAME" '.[] | select(.name == $name) | .uri' | head -n1)"
+echo "=== Creating Juju secret ==="
+SECRET_URI="$(
+    juju add-secret \
+        --model="${JUJU_MODEL}" \
+        "${SECRET_NAME}" \
+        "credentials-personal-access-token=${GITEA_TOKEN}" \
+        | awk '/^secret:/ {print $1}'
+)"
+
+if [[ -z "${SECRET_URI}" ]]; then
+    echo "::error::Failed to create Juju secret."
+    exit 1
 fi
-[[ "$SECRET_URI" == secret:* ]] || { echo 'Could not determine the URI of the newly created Juju secret.' >&2; exit 1; }
-juju grant-secret "$SECRET_NAME" "$APP_NAME"
 
-log 'Configuring git-integrator...'
-juju config "$APP_NAME" \
-  authentication_method=personal-access-token \
-  credentials_username="$GITEA_USERNAME" \
-  credentials_personal_access_token_secret="$SECRET_URI" \
-  repository_url="$REPOSITORY_URL" \
-  tracking_ref="$TRACKING_REF" \
-  path="$REPOSITORY_PATH"
+echo "=== Granting Juju secret ==="
+juju grant-secret \
+    --model="${JUJU_MODEL}" \
+    "${SECRET_URI}" \
+    "${APP_NAME}"
 
-log 'Waiting for git-integrator to become active...'
-juju wait-for application "$APP_NAME" \
-  --query='forEach(units, unit => unit.workload-status == "active")' \
-  --timeout=20m0s
+echo "=== Configuring ${APP_NAME} ==="
+juju config \
+    --model="${JUJU_MODEL}" \
+    "${APP_NAME}" \
+    authentication_method="personal-access-token" \
+    credentials_personal_access_token_secret="${SECRET_URI}" \
+    credentials_username="${GITEA_USERNAME}" \
+    repository_url="${REPOSITORY_URL}" \
+    path="${REPOSITORY_PATH}" \
+    tracking_ref="${TRACKING_REF}"
 
-{
-  echo "git-integrator-app=$APP_NAME"
-  echo "juju-model=$JUJU_MODEL"
-} >> "$GITHUB_OUTPUT"
+echo "=== Waiting for ${APP_NAME} ==="
+juju wait-for application \
+    "${APP_NAME}" \
+    --model="${JUJU_MODEL}" \
+    --timeout=10m
 
-log 'git-integrator is active and configured.'
+echo "git-integrator is ready."
+
+echo "git-integrator-app=${APP_NAME}" >> "${GITHUB_OUTPUT}"

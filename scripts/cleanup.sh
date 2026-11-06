@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
 
-KUBECTL=(kubectl)
-if command -v microk8s >/dev/null 2>&1; then
-  KUBECTL=(microk8s kubectl)
+: "${JUJU_MODEL:?JUJU_MODEL is required}"
+
+GITEA_NAMESPACE="${GITEA_NAMESPACE:-gitea}"
+GIT_INTEGRATOR_APP="${GIT_INTEGRATOR_APP:-git-integrator}"
+
+echo "=== Removing git-integrator ==="
+if juju status "${GIT_INTEGRATOR_APP}" --model="${JUJU_MODEL}" >/dev/null 2>&1; then
+    juju remove-application \
+        --model="${JUJU_MODEL}" \
+        "${GIT_INTEGRATOR_APP}" \
+        --force \
+        --no-prompt
 fi
 
-if [[ -f "${RUNNER_TEMP:-/tmp}/gitea-port-forward.pid" ]]; then
-  kill "$(cat "${RUNNER_TEMP:-/tmp}/gitea-port-forward.pid")" 2>/dev/null || true
+echo "=== Removing Gitea namespace ==="
+if kubectl get namespace "${GITEA_NAMESPACE}" >/dev/null 2>&1; then
+    kubectl delete namespace "${GITEA_NAMESPACE}" --wait=true
 fi
-
-if command -v juju >/dev/null 2>&1 && [[ -n "${JUJU_MODEL:-}" ]]; then
-  juju destroy-model "$JUJU_MODEL" --destroy-storage --force --no-prompt || true
-fi
-
-"${KUBECTL[@]}" delete namespace gitea --ignore-not-found=true --wait=false || true

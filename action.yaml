@@ -1,101 +1,104 @@
-name: Setup Git integration
-description: Provision an ephemeral Gitea server and configure git-integrator for charm integration tests.
-author: Canonical
-branding:
-  icon: git-branch
-  color: purple
+name: "Set up Gitea and git-integrator"
+description: "Deploy an ephemeral Gitea instance into an existing Kubernetes cluster and configure git-integrator to use it."
 
 inputs:
-  repository-name:
-    description: Name of the temporary Gitea repository.
-    required: false
-    default: charm-test-repo
-  tracking-ref:
-    description: Git branch to configure in git-integrator.
-    required: false
-    default: main
-  path:
-    description: Repository path to expose through the integration.
-    required: false
-    default: /
   model:
-    description: Juju model to create/use for the test.
+    description: "Existing Juju model in which git-integrator should be deployed."
+    required: true
+
+  repository-name:
+    description: "Name of the repository to create in Gitea."
     required: false
-    default: git-integration
-  git-integrator-channel:
-    description: CharmHub channel for git-integrator.
+    default: "gitea-demo"
+
+  tracking-ref:
+    description: "Git ref that git-integrator should track."
     required: false
-    default: 1.0/edge
+    default: "main"
+
+  path:
+    description: "Path exposed by git-integrator."
+    required: false
+    default: "/"
+
   gitea-image:
-    description: Gitea container image used for the temporary server.
+    description: "Gitea container image."
     required: false
-    default: docker.gitea.com/gitea:1.23.8
+    default: "docker.gitea.com/gitea:1.23.8"
+
+  git-integrator-channel:
+    description: "Charm channel used to deploy git-integrator."
+    required: false
+    default: "1.0/edge"
+
+  gitea-namespace:
+    description: "Kubernetes namespace used for the temporary Gitea deployment."
+    required: false
+    default: "gitea"
+
+  gitea-username:
+    description: "Username used to create the Gitea repository owner."
+    required: false
+    default: "gitea"
 
 outputs:
   repository-url:
-    description: Internal cluster URL configured in git-integrator.
+    description: "Cluster-internal URL of the repository used by git-integrator."
     value: ${{ steps.gitea.outputs.repository-url }}
+
   repository-name:
-    description: Name of the temporary repository.
+    description: "Name of the repository created in Gitea."
     value: ${{ steps.gitea.outputs.repository-name }}
+
   tracking-ref:
-    description: Git branch configured in git-integrator.
-    value: ${{ steps.gitea.outputs.tracking-ref }}
+    description: "Git ref configured for git-integrator."
+    value: ${{ inputs.tracking-ref }}
+
   git-integrator-app:
-    description: Juju application name for git-integrator.
+    description: "Name of the git-integrator application."
     value: ${{ steps.integrator.outputs.git-integrator-app }}
-  juju-model:
-    description: Juju model containing git-integrator.
-    value: ${{ steps.integrator.outputs.juju-model }}
 
 runs:
-  using: composite
+  using: "composite"
   steps:
-    
-    - name: Set up Juju and MicroK8s
-      if: ${{ env.CONTROLLER_NAME == '' }}
-      uses: charmed-kubernetes/actions-operator@main
-      with:
-        provider: microk8s
-        channel: 1.32-strict/stable
-        juju-channel: 3.6/stable
-
-    - name: Debug MicroK8s CoreDNS
-      if: failure()
+    - name: Check Kubernetes and Juju
       shell: bash
+      env:
+        JUJU_MODEL: ${{ inputs.model }}
       run: |
-        set +e
+        set -euo pipefail
 
-        MIKROK8S="sudo -g snap_microk8s microk8s"
+        command -v kubectl >/dev/null 2>&1 || {
+          echo "::error::kubectl is required. Provision Kubernetes before using this action."
+          exit 1
+        }
 
-        echo "=== MicroK8s status ==="
-        $MIKROK8S status
+        command -v juju >/dev/null 2>&1 || {
+          echo "::error::juju is required. Provision Juju before using this action."
+          exit 1
+        }
+
+        echo "=== Kubernetes client ==="
+        kubectl version --client
 
         echo "=== Kubernetes nodes ==="
-        $MIKROK8S kubectl get nodes -o wide
+        kubectl get nodes -o wide
 
-        echo "=== kube-system pods ==="
-        $MIKROK8S kubectl get pods -n kube-system -o wide
+        echo "=== Juju version ==="
+        juju version
 
-        echo "=== CoreDNS deployment ==="
-        $MIKROK8S kubectl get deployment coredns -n kube-system -o wide
+        echo "=== Juju model ==="
+        juju status --model "${JUJU_MODEL}" --format=short
 
-        echo "=== CoreDNS pods ==="
-        $MIKROK8S kubectl describe pods -n kube-system -l k8s-app=kube-dns
-
-        echo "=== CoreDNS logs ==="
-        $MIKROK8S kubectl logs -n kube-system -l k8s-app=kube-dns --all-containers=true --tail=200
-
-        echo "=== kube-system events ==="
-        $MIKROK8S kubectl get events -n kube-system --sort-by='.lastTimestamp'
-        
     - name: Create Gitea and seed repository
       id: gitea
       shell: bash
       env:
+        GITEA_NAMESPACE: ${{ inputs.gitea-namespace }}
+        GITEA_IMAGE: ${{ inputs.gitea-image }}
+        GITEA_USERNAME: ${{ inputs.gitea-username }}
         REPOSITORY_NAME: ${{ inputs.repository-name }}
         TRACKING_REF: ${{ inputs.tracking-ref }}
-        GITEA_IMAGE: ${{ inputs.gitea-image }}
       run: bash "${{ github.action_path }}/scripts/setup-gitea.sh"
 
     - name: Deploy and configure git-integrator
@@ -108,4 +111,6 @@ runs:
         TRACKING_REF: ${{ inputs.tracking-ref }}
         REPOSITORY_PATH: ${{ inputs.path }}
         GITEA_USERNAME: ${{ steps.gitea.outputs.gitea-username }}
+        GITEA_TOKEN: ${{ steps.gitea.outputs.gitea-token }}
       run: bash "${{ github.action_path }}/scripts/deploy-git-integrator.sh"
+
