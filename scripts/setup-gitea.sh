@@ -37,9 +37,14 @@ export GITEA_NAMESPACE GITEA_IMAGE
 envsubst < "${MANIFEST}" > "${tmp_manifest}"
 
 echo "=== Deploying Gitea ==="
+
+kubectl create namespace "${GITEA_NAMESPACE}" \
+    --dry-run=client \
+    -o yaml | kubectl apply -f -
+
 kubectl apply -f "${tmp_manifest}"
 
-eecho "=== Waiting for Gitea ==="
+echo "=== Waiting for Gitea ==="
 if ! kubectl rollout status \
     "deployment/gitea" \
     --namespace "${GITEA_NAMESPACE}" \
