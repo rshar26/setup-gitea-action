@@ -96,7 +96,7 @@ kubectl port-forward \
 port_forward_pid=$!
 
 for _ in $(seq 1 60); do
-    if curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/api/v1/version" >/dev/null 2>&1; then
+    if curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/" >/dev/null 2>&1; then
         break
     fi
 
@@ -109,7 +109,7 @@ for _ in $(seq 1 60); do
     sleep 2
 done
 
-if ! curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/api/v1/version" >/dev/null 2>&1; then
+if ! curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/" >/dev/null 2>&1; then
     cat /tmp/gitea-port-forward.log >&2 || true
     echo "::error::Gitea did not become reachable through port-forward."
     exit 1
