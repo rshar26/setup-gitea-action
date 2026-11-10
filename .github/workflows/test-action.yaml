@@ -1,6 +1,9 @@
 name: Test setup-gitea-action
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
   pull_request:
 

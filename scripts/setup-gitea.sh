@@ -115,10 +115,18 @@ if ! curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/" >/dev/null 2>&1; the
     exit 1
 fi
 
+echo "=== Gitea container user ==="
+kubectl exec \
+    --namespace "${GITEA_NAMESPACE}" \
+    deployment/gitea \
+    -- \
+    id
+    
 echo "=== Creating Gitea user ==="
 kubectl exec \
     --namespace "${GITEA_NAMESPACE}" \
     deployment/gitea \
+    --user 1000 \
     -- \
     gitea admin user create \
         --username "${GITEA_USERNAME}" \
