@@ -94,6 +94,23 @@ juju config \
     path="${REPOSITORY_PATH}" \
     tracking_ref="${TRACKING_REF}"
 
+echo "=== git-integrator diagnostics ==="
+
+echo "--- Application status ---"
+juju status --model="${JUJU_MODEL}" --format=yaml
+
+echo "--- Unit details ---"
+juju show-unit \
+    --model="${JUJU_MODEL}" \
+    git-integrator/0
+
+echo "--- Recent charm logs ---"
+juju debug-log \
+    --model="${JUJU_MODEL}" \
+    --include git-integrator/0 \
+    --replay \
+    --lines 100
+
 echo "=== Waiting for ${APP_NAME} ==="
 juju wait-for application \
     "${APP_NAME}" \
