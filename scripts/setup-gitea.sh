@@ -45,6 +45,7 @@ kubectl create namespace "${GITEA_NAMESPACE}" \
 kubectl apply -f "${tmp_manifest}"
 
 echo "=== Waiting for Gitea ==="
+
 if ! kubectl rollout status \
     "deployment/gitea" \
     --namespace "${GITEA_NAMESPACE}" \
@@ -89,14 +90,17 @@ PY
 )"
 
 echo "=== Starting temporary Gitea port-forward ==="
+
 kubectl port-forward \
     --namespace "${GITEA_NAMESPACE}" \
     "service/gitea" \
     "${LOCAL_PORT}:3000" >/tmp/gitea-port-forward.log 2>&1 &
+
 port_forward_pid=$!
 
 for _ in $(seq 1 60); do
-    if curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/" >/dev/null 2>&1; then
+    if curl --silent --fail \
+        "http://127.0.0.1:${LOCAL_PORT}/" >/dev/null 2>&1; then
         break
     fi
 
@@ -109,36 +113,28 @@ for _ in $(seq 1 60); do
     sleep 2
 done
 
-if ! curl --silent --fail "http://127.0.0.1:${LOCAL_PORT}/" >/dev/null 2>&1; then
+if ! curl --silent --fail \
+    "http://127.0.0.1:${LOCAL_PORT}/" >/dev/null 2>&1; then
     cat /tmp/gitea-port-forward.log >&2 || true
     echo "::error::Gitea did not become reachable through port-forward."
     exit 1
 fi
 
 echo "=== Gitea container user ==="
+
 kubectl exec \
     --namespace "${GITEA_NAMESPACE}" \
     deployment/gitea \
     -- \
     id
 
-# echo "=== Checking Gitea users ==="
-# kubectl exec \
-#     --namespace "${GITEA_NAMESPACE}" \
-#     deployment/gitea \
-#     -- \
-#     sh -c 'id git; command -v su; command -v runuser; command -v gosu'
-
 echo "=== Creating Gitea user ==="
-kubectl exec \
-    --namespace "${GITEA_NAMESPACE}" \
-    echo "=== Creating Gitea user ==="
+
 kubectl exec \
     --namespace "${GITEA_NAMESPACE}" \
     deployment/gitea \
     -- \
-    su -s /bin/sh git -c \
-    "gitea admin user create \
+    su -s /bin/sh git -c "gitea admin user create \
         --username '${GITEA_USERNAME}' \
         --password '${GITEA_PASSWORD}' \
         --email '${GITEA_EMAIL}' \
@@ -153,6 +149,7 @@ kubectl exec \
     }
 
 echo "=== Creating Gitea access token ==="
+
 TOKEN_RESPONSE="$(
     curl --silent --show-error --fail \
         -X POST \
@@ -170,16 +167,17 @@ PY
 )"
 
 GITEA_TOKEN="$(python3 - <<PY
-import json, sys
-data = json.loads(sys.stdin.read())
+import json
+data = json.loads('''${TOKEN_RESPONSE}''')
 token = data.get("sha1")
 if not token:
     raise SystemExit("Gitea token response did not contain sha1")
 print(token)
 PY
-<<< "${TOKEN_RESPONSE}")"
+)"
 
 echo "=== Creating Gitea repository ==="
+
 HTTP_STATUS="$(
     curl --silent --show-error \
         -o /tmp/gitea-repo-response.json \
@@ -213,8 +211,13 @@ case "${HTTP_STATUS}" in
 esac
 
 echo "=== Seeding repository ==="
+
 WORKTREE="$(mktemp -d)"
-trap 'rm -rf "${WORKTREE}"; cleanup' EXIT
+
+cleanup_worktree() {
+    rm -rf "${WORKTREE}"
+}
+trap 'cleanup_worktree; cleanup' EXIT
 
 git -C "${WORKTREE}" init -q
 git -C "${WORKTREE}" config user.name "Gitea CI"
