@@ -121,12 +121,12 @@ kubectl exec \
     deployment/gitea \
     -- \
     id
-    
+
 echo "=== Creating Gitea user ==="
 kubectl exec \
     --namespace "${GITEA_NAMESPACE}" \
     deployment/gitea \
-    --user 1000 \
+    --user 0 \
     -- \
     gitea admin user create \
         --username "${GITEA_USERNAME}" \
