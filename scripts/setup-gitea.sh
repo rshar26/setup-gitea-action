@@ -122,12 +122,19 @@ kubectl exec \
     -- \
     id
 
+echo "=== Checking Gitea users ==="
+kubectl exec \
+    --namespace "${GITEA_NAMESPACE}" \
+    deployment/gitea \
+    -- \
+    sh -c 'id git; command -v su; command -v runuser; command -v gosu'
+
 echo "=== Creating Gitea user ==="
 kubectl exec \
     --namespace "${GITEA_NAMESPACE}" \
     deployment/gitea \
-    --user 0 \
     -- \
+    su -s /bin/sh git -c \
     gitea admin user create \
         --username "${GITEA_USERNAME}" \
         --password "${GITEA_PASSWORD}" \
