@@ -13,11 +13,32 @@ APP_NAME="git-integrator"
 SECRET_NAME="git-integrator-credentials"
 
 echo "=== Deploying ${APP_NAME} ==="
+
 if ! juju status "${APP_NAME}" --model="${JUJU_MODEL}" >/dev/null 2>&1; then
     juju deploy \
         "${APP_NAME}" \
         --channel="${GIT_INTEGRATOR_CHANNEL}" \
         --model="${JUJU_MODEL}"
+fi
+
+echo "=== Waiting for application registration ==="
+
+for _ in $(seq 1 60); do
+    if juju status --model="${JUJU_MODEL}" --format=json |
+        jq -e --arg app "${APP_NAME}" \
+        '.applications | has($app)' >/dev/null 2>&1; then
+        break
+    fi
+
+    sleep 2
+done
+
+if ! juju status --model="${JUJU_MODEL}" --format=json |
+    jq -e --arg app "${APP_NAME}" \
+    '.applications | has($app)' >/dev/null 2>&1; then
+    juju status --model="${JUJU_MODEL}"
+    echo "::error::Application ${APP_NAME} was not registered in the model."
+    exit 1
 fi
 
 echo "=== Creating Juju secret ==="
@@ -33,6 +54,13 @@ if [[ -z "${SECRET_URI}" ]]; then
     echo "::error::Failed to create Juju secret."
     exit 1
 fi
+
+# diagnosing secret-grant failures
+echo "=== Current Juju model ==="
+juju show-model "${JUJU_MODEL}"
+
+echo "=== Current Juju applications ==="
+juju status --model="${JUJU_MODEL}" --format=tabular
 
 echo "=== Granting Juju secret ==="
 juju grant-secret \
