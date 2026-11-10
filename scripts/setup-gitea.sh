@@ -135,7 +135,7 @@ kubectl exec \
     deployment/gitea \
     -- \
     su -s /bin/sh git -c \
-    "gitea migrate --config /data/gitea/conf/app.ini"
+    "gitea --config /data/gitea/conf/app.ini migrate "
 
 echo "=== Creating Gitea user ==="
 
@@ -144,12 +144,15 @@ kubectl exec \
     deployment/gitea \
     -- \
     su -s /bin/sh git -c \
-    "gitea admin user create \
+    "gitea --config /data/gitea/conf/app.ini admin user create \
         --username '${GITEA_USERNAME}' \
         --password '${GITEA_PASSWORD}' \
         --email '${GITEA_EMAIL}' \
-        --must-change-password=false \
-        --config /data/gitea/conf/app.ini"
+        --must-change-password=false" \
+    || {
+        echo "::error::Failed to create Gitea user."
+        exit 1
+    }
 
 echo "=== Creating Gitea access token ==="
 
@@ -169,15 +172,23 @@ PY
 )"
 )"
 
-GITEA_TOKEN="$(python3 - <<PY
+GITEA_TOKEN="$(
+    printf '%s' "${TOKEN_RESPONSE}" |
+    python3 -c '
 import json
-data = json.loads('''${TOKEN_RESPONSE}''')
+import sys
+
+data = json.load(sys.stdin)
 token = data.get("sha1")
+
 if not token:
     raise SystemExit("Gitea token response did not contain sha1")
+
 print(token)
-PY
+'
 )"
+
+echo "::add-mask::${GITEA_TOKEN}"
 
 echo "=== Creating Gitea repository ==="
 
