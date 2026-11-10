@@ -132,15 +132,18 @@ kubectl exec \
 echo "=== Creating Gitea user ==="
 kubectl exec \
     --namespace "${GITEA_NAMESPACE}" \
+    echo "=== Creating Gitea user ==="
+kubectl exec \
+    --namespace "${GITEA_NAMESPACE}" \
     deployment/gitea \
     -- \
     su -s /bin/sh git -c \
-    gitea admin user create \
-        --username "${GITEA_USERNAME}" \
-        --password "${GITEA_PASSWORD}" \
-        --email "${GITEA_EMAIL}" \
+    "gitea admin user create \
+        --username '${GITEA_USERNAME}' \
+        --password '${GITEA_PASSWORD}' \
+        --email '${GITEA_EMAIL}' \
         --must-change-password=false \
-        --config /data/gitea/conf/app.ini \
+        --config /data/gitea/conf/app.ini" \
     >/tmp/gitea-user-create.log 2>&1 || {
         if ! grep -qE 'already exists|user.*exists' /tmp/gitea-user-create.log; then
             cat /tmp/gitea-user-create.log >&2
