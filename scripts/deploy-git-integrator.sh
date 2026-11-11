@@ -87,7 +87,7 @@ echo "=== Configuring ${APP_NAME} ==="
 juju config \
     --model="${JUJU_MODEL}" \
     "${APP_NAME}" \
-    authentication_method="personal-access-token" \
+    authentication_method="credentials" \
     credentials_personal_access_token_secret="${SECRET_URI}" \
     credentials_username="${GITEA_USERNAME}" \
     repository_url="${REPOSITORY_URL}" \
