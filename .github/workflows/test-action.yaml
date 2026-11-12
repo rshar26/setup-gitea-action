@@ -124,7 +124,7 @@ jobs:
         run: |
           set +e
 
-          yes | juju destroy-model \
+          printf '%s\n' "${JUJU_MODEL}" | juju destroy-model \
             "${JUJU_MODEL}" \
             --destroy-storage
 
