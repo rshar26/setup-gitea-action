@@ -125,7 +125,7 @@ jobs:
           set +e
 
           juju destroy-model \
-            --model "${JUJU_MODEL}" \
+            "${JUJU_MODEL}" \
             --destroy-storage \
             --yes
 
