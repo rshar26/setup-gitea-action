@@ -124,10 +124,9 @@ jobs:
         run: |
           set +e
 
-          juju destroy-model \
+          yes | juju destroy-model \
             "${JUJU_MODEL}" \
-            --destroy-storage \
-            --yes
+            --destroy-storage
 
       - name: Restore Concierge environment
         if: always()
