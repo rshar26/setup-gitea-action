@@ -113,7 +113,7 @@ jobs:
           GITEA_NAMESPACE: gitea-action
         run: |
           set +e
-          bash "${{ github.workspace }}/actions/setup-gitea-action/scripts/cleanup.sh"
+          bash "${{ github.workspace }}/scripts/cleanup.sh"
 
       - name: Destroy test Juju model
         if: always()
