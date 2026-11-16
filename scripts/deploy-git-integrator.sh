@@ -23,29 +23,10 @@ juju deploy \
 
 echo "=== Waiting for application registration ==="
 
-for _ in $(seq 1 60); do
-    if juju status \
-        --model="${JUJU_MODEL}" \
-        --format=json |
-        jq -e --arg app "${APP_NAME}" \
-        '.applications | has($app)' >/dev/null 2>&1; then
-        break
-    fi
-
-    sleep 2
-done
-
-if ! juju status \
+juju wait-for application "${APP_NAME}" \
     --model="${JUJU_MODEL}" \
-    --format=json |
-    jq -e --arg app "${APP_NAME}" \
-    '.applications | has($app)' >/dev/null 2>&1; then
-
-    juju status --model="${JUJU_MODEL}"
-
-    echo "::error::Application ${APP_NAME} was not registered in the model."
-    exit 1
-fi
+    --query='life=="alive"' \
+    --timeout=2m
 
 echo "=== Creating Juju secret ==="
 SECRET_URI="$(
@@ -99,23 +80,23 @@ if ! juju wait-for application \
     echo "--- Application status ---"
     juju status \
         --model="${JUJU_MODEL}" \
-        --format=yaml
+        --format=tabular
 
     echo "--- Unit details ---"
     juju show-unit \
         --model="${JUJU_MODEL}" \
-        git-integrator/0
+        gitea-action-git-integrator/0
 
     echo "--- Recent charm logs ---"
     juju debug-log \
         --model="${JUJU_MODEL}" \
-        --include git-integrator/0 \
+        --include gitea-action-git-integrator/0 \
         --replay \
-        --lines 100
+        --lines 200
 
     exit 1
 fi
 
-echo "git-integrator is ready."
+echo "${APP_NAME} is ready."
 
 echo "git-integrator-app=${APP_NAME}" >> "${GITHUB_OUTPUT}"
