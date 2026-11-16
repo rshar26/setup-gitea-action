@@ -39,7 +39,10 @@ juju wait-for application "${APP_NAME}" \
 
 echo "=== Creating Juju secret ==="
 
-SECRET_FILE="$(mktemp)"
+JUJU_SNAP_COMMON="${HOME}/snap/juju/common"
+mkdir -p "${JUJU_SNAP_COMMON}"
+
+SECRET_FILE="$(mktemp "${JUJU_SNAP_COMMON}/secret.XXXXXX")"
 chmod 600 "${SECRET_FILE}"
 
 printf 'credentials-personal-access-token: %s\n' \
@@ -64,10 +67,16 @@ echo "Juju version:"
 juju version
 echo "Juju executable details:"
 ls -l "$(command -v juju)"
-echo "Juju mount namespace:"
-readlink /proc/self/ns/mnt
-echo "Runner mount namespace:"
-readlink /proc/1/ns/mnt
+
+echo "=== Mount namespace diagnostics ==="
+echo "Current shell:"
+readlink /proc/self/ns/mnt || true
+
+echo "PID 1:"
+readlink /proc/1/ns/mnt || true
+
+echo "Snap environment:"
+env | grep '^SNAP' | sort || true
 
 echo "=== Testing Juju secret file access ==="
 if juju add-secret \
