@@ -38,32 +38,60 @@ juju wait-for application "${APP_NAME}" \
     --timeout=2m
 
 echo "=== Creating Juju secret ==="
+
 SECRET_FILE="$(mktemp)"
 chmod 600 "${SECRET_FILE}"
 
 printf 'credentials-personal-access-token: %s\n' \
     "${GITEA_TOKEN}" > "${SECRET_FILE}"
 
-echo "=== Checking secret file ==="
+echo "=== Secret file diagnostics ==="
 echo "Secret file path: ${SECRET_FILE}"
-if [[ ! -f "${SECRET_FILE}" ]]; then
-    echo "::error::Secret file does not exist: ${SECRET_FILE}"
+echo "Runner user: $(id)"
+echo "Runner hostname: $(hostname)"
+echo "File metadata:"
+stat "${SECRET_FILE}"
+echo "File readability:"
+if [[ -r "${SECRET_FILE}" ]]; then
+    echo "Readable by current user."
+else
+    echo "::error::File is not readable by current user."
+fi
+
+echo "=== Juju CLI diagnostics ==="
+echo "Juju executable: $(command -v juju)"
+echo "Juju version:"
+juju version
+echo "Juju executable details:"
+ls -l "$(command -v juju)"
+echo "Juju mount namespace:"
+readlink /proc/self/ns/mnt
+echo "Runner mount namespace:"
+readlink /proc/1/ns/mnt
+
+echo "=== Testing Juju secret file access ==="
+if juju add-secret \
+    --model="${JUJU_MODEL}" \
+    "${SECRET_NAME}" \
+    --file="${SECRET_FILE}" \
+    > /tmp/juju-add-secret-output.txt 2>&1; then
+
+    cat /tmp/juju-add-secret-output.txt
+    SECRET_URI="$(
+        awk '/^secret:/ {print $1}' /tmp/juju-add-secret-output.txt
+    )"
+else
+    cat /tmp/juju-add-secret-output.txt
+    echo "::error::juju add-secret failed."
     exit 1
 fi
-ls -l "${SECRET_FILE}"
-
-SECRET_URI="$(
-    juju add-secret \
-        --model="${JUJU_MODEL}" \
-        "${SECRET_NAME}" \
-        --file="${SECRET_FILE}" |
-        awk '/^secret:/ {print $1}'
-)"
 
 if [[ -z "${SECRET_URI}" ]]; then
-    echo "::error::Failed to create Juju secret."
+    echo "::error::Failed to extract secret URI from Juju output."
     exit 1
 fi
+
+echo "Secret created successfully."
 
 # diagnosing secret-grant failures
 echo "=== Current Juju model ==="
