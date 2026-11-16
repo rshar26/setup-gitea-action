@@ -8,8 +8,9 @@ set -euo pipefail
 : "${REPOSITORY_PATH:?REPOSITORY_PATH is required}"
 : "${GITEA_USERNAME:?GITEA_USERNAME is required}"
 : "${GITEA_TOKEN:?GITEA_TOKEN is required}"
+: "${GIT_INTEGRATOR_APP_NAME:?GIT_INTEGRATOR_APP_NAME is required}"
 
-APP_NAME="gitea-action-git-integrator"
+APP_NAME="${GIT_INTEGRATOR_APP_NAME}"
 SECRET_NAME="gitea-action-git-integrator-credentials"
 
 echo "=== Deploying ${APP_NAME} ==="
