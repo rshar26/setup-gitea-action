@@ -44,6 +44,14 @@ chmod 600 "${SECRET_FILE}"
 printf 'credentials-personal-access-token: %s\n' \
     "${GITEA_TOKEN}" > "${SECRET_FILE}"
 
+echo "=== Checking secret file ==="
+echo "Secret file path: ${SECRET_FILE}"
+if [[ ! -f "${SECRET_FILE}" ]]; then
+    echo "::error::Secret file does not exist: ${SECRET_FILE}"
+    exit 1
+fi
+ls -l "${SECRET_FILE}"
+
 SECRET_URI="$(
     juju add-secret \
         --model="${JUJU_MODEL}" \
