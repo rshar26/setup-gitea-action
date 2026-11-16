@@ -48,59 +48,18 @@ chmod 600 "${SECRET_FILE}"
 printf 'credentials-personal-access-token: %s\n' \
     "${GITEA_TOKEN}" > "${SECRET_FILE}"
 
-echo "=== Secret file diagnostics ==="
-echo "Secret file path: ${SECRET_FILE}"
-echo "Runner user: $(id)"
-echo "Runner hostname: $(hostname)"
-echo "File metadata:"
-stat "${SECRET_FILE}"
-echo "File readability:"
-if [[ -r "${SECRET_FILE}" ]]; then
-    echo "Readable by current user."
-else
-    echo "::error::File is not readable by current user."
-fi
-
-echo "=== Juju CLI diagnostics ==="
-echo "Juju executable: $(command -v juju)"
-echo "Juju version:"
-juju version
-echo "Juju executable details:"
-ls -l "$(command -v juju)"
-
-echo "=== Mount namespace diagnostics ==="
-echo "Current shell:"
-readlink /proc/self/ns/mnt || true
-
-echo "PID 1:"
-readlink /proc/1/ns/mnt || true
-
-echo "Snap environment:"
-env | grep '^SNAP' | sort || true
-
-echo "=== Testing Juju secret file access ==="
-if juju add-secret \
-    --model="${JUJU_MODEL}" \
-    "${SECRET_NAME}" \
-    --file="${SECRET_FILE}" \
-    > /tmp/juju-add-secret-output.txt 2>&1; then
-
-    cat /tmp/juju-add-secret-output.txt
-    SECRET_URI="$(
-        awk '/^secret:/ {print $1}' /tmp/juju-add-secret-output.txt
-    )"
-else
-    cat /tmp/juju-add-secret-output.txt
-    echo "::error::juju add-secret failed."
-    exit 1
-fi
+SECRET_URI="$(
+    juju add-secret \
+        --model="${JUJU_MODEL}" \
+        "${SECRET_NAME}" \
+        --file="${SECRET_FILE}" |
+        awk '/^secret:/ {print $1}'
+)"
 
 if [[ -z "${SECRET_URI}" ]]; then
     echo "::error::Failed to extract secret URI from Juju output."
     exit 1
 fi
-
-echo "Secret created successfully."
 
 # diagnosing secret-grant failures
 echo "=== Current Juju model ==="
